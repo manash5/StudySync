@@ -1,0 +1,23 @@
+# Dependencies 
+**/node_modules/
+
+# Environment files 
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.sample
+
+# Common build artifacts
+**/.next/
+**/dist/
+**/build/
+**/coverage/
+
+# Logs
+**/*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
