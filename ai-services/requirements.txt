@@ -1,0 +1,30 @@
+# FastAPI backend
+fastapi
+uvicorn
+python-multipart
+pydantic
+requests
+
+# Environment management
+python-dotenv
+
+# Audio processing
+librosa
+numpy<2
+scipy
+soundfile
+
+# Speaker diarization (advanced)
+pyannote.audio==3.1.1
+torch==2.1.0
+torchaudio==2.1.0
+huggingface_hub==0.23.4
+speechbrain==0.5.16
+
+# NLP / ML
+scikit-learn
+networkx
+matplotlib
+
+# Whisper via Groq API
+groq
