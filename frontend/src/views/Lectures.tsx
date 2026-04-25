@@ -1,93 +1,164 @@
-import { useState, useRef } from 'react'
-import { Upload, Mic, X, Play, Pause, Download, Trash2, Clock, Pencil, Check } from 'lucide-react'
-
-interface Lecture {
-  id: number
-  subject: string
-  fileName: string
-  fileSize: string
-  duration: string
-  uploadedAt: string
-  type: 'upload' | 'recording'
-}
-
-const demoLectures: Lecture[] = [
-  { id: 1, subject: 'Web API Development', fileName: 'Lecture_01_APIs.mp3', fileSize: '45.2 MB', duration: '1:23:45', uploadedAt: '2024-04-20', type: 'upload' },
-  { id: 2, subject: 'Mobile Development', fileName: 'Class_Recording_04-25.mp3', fileSize: '52.8 MB', duration: '1:45:20', uploadedAt: '2024-04-25', type: 'recording' },
-]
+import { useEffect, useRef, useState } from 'react'
+import { Upload, X, Play, Pause, Download, Trash2, Clock, Pencil, Check } from 'lucide-react'
+import { aiApi, backendApi, mediaUrl, type AiLectureResponse, type Lecture, type Subject } from '../lib/api'
 
 export default function Lectures() {
-  const [lectures, setLectures] = useState<Lecture[]>(demoLectures)
-  const [isRecording, setIsRecording] = useState(false)
-  const [playingId, setPlayingId] = useState<number | null>(null)
+  const [lectures, setLectures] = useState<Lecture[]>([])
+  const [subjects, setSubjects] = useState<Subject[]>([])
+  const [playingId, setPlayingId] = useState<string | null>(null)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [selectedSubject, setSelectedSubject] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const editInputRef = useRef<HTMLInputElement>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  const loadData = async () => {
+    try {
+      const [lecturesRes, subjectsRes] = await Promise.all([
+        backendApi.get<Lecture[]>('/api/lectures'),
+        backendApi.get<Subject[]>('/api/subjects'),
+      ])
+      setLectures(lecturesRes)
+      setSubjects(subjectsRes)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load lectures')
+    }
+  }
+
+  useEffect(() => {
+    void loadData()
+  }, [])
 
   const startEdit = (lecture: Lecture) => {
-    setEditingId(lecture.id)
+    setEditingId(lecture._id)
     setEditingName(lecture.fileName)
     setTimeout(() => editInputRef.current?.focus(), 50)
   }
 
-  const commitEdit = (id: number) => {
-    if (editingName.trim()) {
-      setLectures(prev => prev.map(l => l.id === id ? { ...l, fileName: editingName.trim() } : l))
+  const commitEdit = async (lecture: Lecture) => {
+    const name = editingName.trim()
+    if (!name) {
+      setEditingId(null)
+      return
     }
-    setEditingId(null)
-    setEditingName('')
+
+    try {
+      const updated = await backendApi.put<Lecture>(`/lectures/${lecture._id}`, {
+        fileName: name,
+        subject: lecture.subject,
+      })
+      setLectures(prev => prev.map(l => l._id === lecture._id ? updated : l))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rename lecture')
+    } finally {
+      setEditingId(null)
+      setEditingName('')
+    }
   }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file && file.type.startsWith('audio/')) {
-      setSelectedFile(file)
+    if (!file) return
+
+    if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+      setError('Please choose an audio/video lecture file.')
+      return
+    }
+
+    setSelectedFile(file)
+    setError('')
+  }
+
+  const ensureSubjectId = async (subjectName: string): Promise<string> => {
+    const existing = subjects.find(s => s.name.toLowerCase() === subjectName.toLowerCase())
+    if (existing) return existing._id
+
+    const created = await backendApi.post<Subject>('/subjects', { name: subjectName, color: '#3b82f6' })
+    setSubjects(prev => [...prev, created])
+    return created._id
+  }
+
+  const handleUpload = async () => {
+    if (!selectedFile || !selectedSubject.trim()) return
+
+    setIsUploading(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const lectureForm = new FormData()
+      lectureForm.append('file', selectedFile)
+      lectureForm.append('subject', selectedSubject.trim())
+      const createdLecture = await backendApi.post<Lecture>('/lectures', lectureForm)
+      setLectures(prev => [createdLecture, ...prev])
+
+      // Run AI lecture extraction directly from ai-services and store structured note in backend.
+      const aiForm = new FormData()
+      aiForm.append('file', selectedFile)
+      const aiResult = await aiApi.post<AiLectureResponse>('/lecture/upload-lecture', aiForm)
+
+      const subjectId = await ensureSubjectId(selectedSubject.trim())
+      await backendApi.post('/notes', {
+        subjectId,
+        lectureId: createdLecture._id,
+        title: aiResult.topic || createdLecture.fileName,
+        lectureNumber: `Lecture ${new Date().toLocaleDateString()}`,
+        duration: `${Math.max(1, Math.round(aiResult.lecturer_duration_seconds || 0))} sec`,
+        mainTopic: aiResult.topic || selectedSubject.trim(),
+        prerequisites: aiResult.prerequisites || [],
+        keyConcepts: (aiResult.key_concepts || []).map((concept) => ({ concept, score: 0.8 })),
+        importantPoints: aiResult.important_points || [],
+        notes: aiResult.detailed_explanation || 'No detailed explanation provided by AI.',
+      })
+
+      setSuccess('Lecture uploaded and AI notes were generated successfully.')
+      setShowUploadModal(false)
+      setSelectedFile(null)
+      setSelectedSubject('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setIsUploading(false)
     }
   }
 
-  const handleUpload = () => {
-    if (!selectedFile || !selectedSubject) return
-    const newLecture: Lecture = {
-      id: Date.now(),
-      subject: selectedSubject,
-      fileName: selectedFile.name,
-      fileSize: `${(selectedFile.size / 1024 / 1024).toFixed(1)} MB`,
-      duration: '00:00:00',
-      uploadedAt: new Date().toLocaleDateString(),
-      type: 'upload'
+  const handleDelete = async (id: string) => {
+    try {
+      await backendApi.delete<{ message: string }>(`/lectures/${id}`)
+      setLectures(prev => prev.filter(l => l._id !== id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed')
     }
-    setLectures(prev => [newLecture, ...prev])
-    setShowUploadModal(false)
-    setSelectedFile(null)
-    setSelectedSubject('')
   }
 
-  const handleStartRecording = () => setIsRecording(true)
-
-  const handleStopRecording = () => {
-    setIsRecording(false)
-    const newLecture: Lecture = {
-      id: Date.now(),
-      subject: 'New Recording',
-      fileName: `Recording_${new Date().toISOString().slice(0, 10)}.mp3`,
-      fileSize: '23.5 MB',
-      duration: '45:30',
-      uploadedAt: new Date().toLocaleDateString(),
-      type: 'recording'
+  const togglePlay = (lecture: Lecture) => {
+    if (!audioRef.current) {
+      audioRef.current = new Audio(mediaUrl(lecture.fileUrl))
     }
-    setLectures(prev => [newLecture, ...prev])
-  }
 
-  const handleDelete = (id: number) => {
-    setLectures(prev => prev.filter(l => l.id !== id))
+    if (playingId === lecture._id) {
+      audioRef.current.pause()
+      setPlayingId(null)
+      return
+    }
+
+    if (audioRef.current.src !== mediaUrl(lecture.fileUrl)) {
+      audioRef.current.pause()
+      audioRef.current = new Audio(mediaUrl(lecture.fileUrl))
+      audioRef.current.onended = () => setPlayingId(null)
+    }
+
+    void audioRef.current.play()
+    setPlayingId(lecture._id)
   }
 
   return (
     <div className="animate-fade-in">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}>Lecture Library</h2>
@@ -100,67 +171,54 @@ export default function Lectures() {
           >
             <Upload size={15} /> Upload Lecture
           </button>
-          <button
-            onClick={handleStartRecording}
-            disabled={isRecording}
-            className="px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all"
-            style={{
-              background: isRecording ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.1)',
-              border: `1px solid ${isRecording ? 'rgba(239, 68, 68, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
-              color: isRecording ? '#ef4444' : '#60a5fa'
-            }}
-          >
-            <Mic size={15} /> {isRecording ? 'Recording...' : 'Record Lecture'}
-          </button>
-          {isRecording && (
-            <button
-              onClick={handleStopRecording}
-              className="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all"
-              style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', color: '#22c55e' }}
-            >
-              Stop
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Lectures List */}
+      {error && (
+        <div className="mb-4 rounded-xl px-3 py-2 text-sm" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="mb-4 rounded-xl px-3 py-2 text-sm" style={{ color: '#10b981', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
+          {success}
+        </div>
+      )}
+
       <div className="space-y-3">
         {lectures.length === 0 ? (
           <div className="text-center py-16" style={{ background: 'var(--bg-secondary)', borderRadius: '16px', border: '1px dashed var(--border-color)' }}>
-            <Mic size={48} className="mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+            <Upload size={48} className="mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
             <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>No lectures yet</h3>
-            <p style={{ color: 'var(--text-muted)' }}>Upload or record your first lecture to get started</p>
+            <p style={{ color: 'var(--text-muted)' }}>Upload your first lecture to generate AI notes.</p>
           </div>
         ) : (
           lectures.map(lecture => (
             <div
-              key={lecture.id}
+              key={lecture._id}
               className="glass-card rounded-2xl p-4 flex items-center gap-4 group transition-all"
               style={{ border: '1px solid var(--border-color)' }}
             >
-              {/* Play Button */}
               <button
-                onClick={() => setPlayingId(playingId === lecture.id ? null : lecture.id)}
+                onClick={() => togglePlay(lecture)}
                 className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all"
                 style={{
-                  background: playingId === lecture.id ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.1)',
-                  color: '#60a5fa'
+                  background: playingId === lecture._id ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.1)',
+                  color: '#60a5fa',
                 }}
               >
-                {playingId === lecture.id ? <Pause size={20} /> : <Play size={20} />}
+                {playingId === lecture._id ? <Pause size={20} /> : <Play size={20} />}
               </button>
 
-              {/* Info — with inline name edit */}
               <div className="flex-1 min-w-0">
-                {editingId === lecture.id ? (
+                {editingId === lecture._id ? (
                   <div className="flex items-center gap-2">
                     <input
                       ref={editInputRef}
                       value={editingName}
                       onChange={e => setEditingName(e.target.value)}
                       onKeyDown={e => {
-                        if (e.key === 'Enter') commitEdit(lecture.id)
+                        if (e.key === 'Enter') void commitEdit(lecture)
                         if (e.key === 'Escape') setEditingId(null)
                       }}
                       className="flex-1 px-3 py-1.5 rounded-lg text-sm font-semibold outline-none"
@@ -171,7 +229,7 @@ export default function Lectures() {
                       }}
                     />
                     <button
-                      onClick={() => commitEdit(lecture.id)}
+                      onClick={() => void commitEdit(lecture)}
                       className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
                       style={{ background: 'rgba(34,197,94,0.12)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.3)' }}
                     >
@@ -201,28 +259,30 @@ export default function Lectures() {
 
                 <div className="flex items-center gap-4 mt-1.5 text-sm" style={{ color: 'var(--text-secondary)' }}>
                   <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: lecture.type === 'recording' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.1)', color: lecture.type === 'recording' ? '#ef4444' : '#60a5fa' }}>
-                    {lecture.type === 'recording' ? '🎙️ Recording' : '📁 Upload'}
+                    {lecture.type === 'recording' ? 'Recording' : 'Upload'}
                   </span>
-                  <span>{lecture.subject}</span>
+                  <span>{lecture.subject || 'Uncategorized'}</span>
                   <span className="flex items-center gap-1">
                     <Clock size={14} /> {lecture.duration}
                   </span>
                   <span>{lecture.fileSize}</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{lecture.uploadedAt}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{new Date(lecture.createdAt).toLocaleDateString()}</span>
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
+                <a
+                  href={mediaUrl(lecture.fileUrl)}
+                  target="_blank"
+                  rel="noreferrer"
                   className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors hover:bg-blue-500/10"
                   style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
                   title="Download"
                 >
                   <Download size={16} />
-                </button>
+                </a>
                 <button
-                  onClick={() => handleDelete(lecture.id)}
+                  onClick={() => void handleDelete(lecture._id)}
                   className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors hover:bg-red-500/10"
                   style={{ color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' }}
                   title="Delete"
@@ -235,7 +295,6 @@ export default function Lectures() {
         )}
       </div>
 
-      {/* Upload Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
           <div className="w-full max-w-md glass-card rounded-3xl p-6 animate-fade-in-up"
@@ -261,7 +320,7 @@ export default function Lectures() {
               </div>
 
               <div>
-                <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>Lecture File (MP3, WAV, M4A) *</label>
+                <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>Lecture File *</label>
                 <label className="flex items-center justify-center gap-3 p-6 rounded-xl cursor-pointer transition-all"
                        style={{ border: '1px dashed var(--border-color)', background: 'rgba(59,130,246,0.03)' }}>
                   <div className="text-center">
@@ -269,18 +328,10 @@ export default function Lectures() {
                     <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
                       {selectedFile ? selectedFile.name : 'Click to select or drag file here'}
                     </span>
-                    <span className="text-xs block mt-1" style={{ color: 'var(--text-muted)' }}>Max 500 MB</span>
                   </div>
-                  <input type="file" accept="audio/*" className="hidden" onChange={handleFileSelect} />
+                  <input type="file" accept="audio/*,video/*" className="hidden" onChange={handleFileSelect} />
                 </label>
               </div>
-
-              {selectedFile && (
-                <div className="p-3 rounded-xl" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
-                  <p className="text-sm font-medium" style={{ color: '#22c55e' }}>✓ File selected: {selectedFile.name}</p>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
-                </div>
-              )}
             </div>
 
             <div className="flex gap-3 mt-6">
@@ -289,10 +340,10 @@ export default function Lectures() {
                       style={{ border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
                 Cancel
               </button>
-              <button onClick={handleUpload}
-                      disabled={!selectedFile || !selectedSubject}
+              <button onClick={() => void handleUpload()}
+                      disabled={!selectedFile || !selectedSubject || isUploading}
                       className="btn-primary flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50">
-                Upload
+                {isUploading ? 'Uploading...' : 'Upload'}
               </button>
             </div>
           </div>

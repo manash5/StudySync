@@ -1,17 +1,36 @@
+"use client"; 
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, ArrowRight, Mail, Lock } from 'lucide-react'
 import Logo from '../components/Logo'
+import { backendApi, type AuthResponse } from '../lib/api'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function LoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    navigate('/app/dashboard')
+    setError('')
+    setLoading(true)
+
+    try {
+      const response = await backendApi.post<AuthResponse>('/api/auth/login', { email, password }, false)
+      login(response)
+      const target = (location.state as { from?: string } | null)?.from || '/app/dashboard'
+      navigate(target, { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -58,6 +77,11 @@ export default function LoginPage() {
           </p>
 
           <form onSubmit={handleLogin} className="space-y-4">
+            {error && (
+              <div className="text-sm rounded-xl px-3 py-2" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                {error}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>Email</label>
               <div className="relative">
@@ -96,8 +120,8 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <button type="submit" className="btn-primary w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 mt-2">
-              Sign in <ArrowRight size={16} />
+            <button type="submit" disabled={loading} className="btn-primary w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 mt-2 disabled:opacity-60">
+              {loading ? 'Signing in...' : 'Sign in'} <ArrowRight size={16} />
             </button>
           </form>
 
@@ -107,9 +131,9 @@ export default function LoginPage() {
                   style={{ background: 'var(--bg-dark)', color: 'var(--text-muted)' }}>or continue with</span>
           </div>
 
-          <button className="w-full py-3 rounded-xl text-sm font-medium transition-all hover:border-blue-500/50 flex items-center justify-center gap-2"
+            <button type="button" className="w-full py-3 rounded-xl text-sm font-medium transition-all hover:border-blue-500/50 flex items-center justify-center gap-2"
                   style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'rgba(59,130,246,0.04)' }}
-                  onClick={() => navigate('/app/dashboard')}>
+              onClick={() => setError('Google login is not configured on backend yet.')}>
             <svg width="16" height="16" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
               <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>

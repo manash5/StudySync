@@ -6,6 +6,7 @@ import {
   Brain, Sparkles, Flame, TrendingUp
 } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
+import { useAuth } from '../contexts/AuthContext'
 import Logo from './Logo'
 
 const navItems = [
@@ -21,7 +22,10 @@ export default function DashboardLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
+  const { user, logout } = useAuth()
   const navigate = useNavigate()
+    const notifications: Array<{ title: string; subtitle: string }> = []
+
   const location = useLocation()
 
   const pageTitle = navItems.find(n => location.pathname.startsWith(n.to))?.label || 'Dashboard'
@@ -87,7 +91,7 @@ export default function DashboardLayout() {
             </>
           )}
         </NavLink>
-        <button onClick={() => navigate('/')}
+        <button onClick={() => { logout(); navigate('/login') }}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm w-full hover:bg-red-500/5 transition-colors"
                 style={{ color: 'var(--text-muted)' }}>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.08)' }}>
@@ -101,8 +105,8 @@ export default function DashboardLayout() {
             P
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>Prashant</div>
-            <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>Softwarica College</div>
+            <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{user?.name ?? 'Student'}</div>
+            <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{user?.university ?? user?.email ?? 'StudySync'}</div>
           </div>
         </div>
       </div>
@@ -197,50 +201,26 @@ export default function DashboardLayout() {
                     </div>
 
                     <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
-                      {[
-                        { name: 'Recall Engine', action: 'ready for Machine Learning', time: '5 minutes ago', type: 'Topic: Gradient Descent', unread: true },
-                        { name: 'StudySync System', action: 'generated your evening strategy', time: '1 hour ago', type: 'Schedule Update', unread: true },
-                        { name: 'Dr. Sarah', action: 'shared a new research paper', time: '3 hours ago', type: 'Advanced AI', file: 'Neural_Dynamics_2025.pdf', unread: false, actions: true },
-                        { name: 'Streak Monitor', action: 'Consistency milestone reached!', time: '6 hours ago', type: '7 Day Streak', unread: false },
-                        { name: 'Course Assistant', action: 'shared lecture notes with you', time: 'Yesterday', type: 'Data Structures', file: 'Binary_Trees_Final.pdf', unread: false },
-                      ].map((notif, i) => (
+                      {notifications.map((notif, i) => (
                         <div key={i} className="p-4 hover:bg-slate-50 transition-all cursor-pointer border-b border-slate-100 last:border-0 group">
                           <div className="flex gap-3">
                             <div className="pt-1">
                               <div
-                                className={`w-2.5 h-2.5 rounded-full ${notif.unread ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.55)]' : 'bg-slate-200'}`}
+                                className="w-2.5 h-2.5 rounded-full bg-slate-200"
                               />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="flex justify-between items-start mb-1">
-                                <p className="text-[14px] leading-tight text-slate-800">
-                                  <span className="font-bold">{notif.name} </span>
-                                  <span>{notif.action}</span>
-                                </p>
-                              </div>
-                              <p className="text-[11px] text-slate-400 font-semibold tracking-tight">
-                                {notif.time}  •  {notif.type}
+                              <p className="text-[14px] leading-tight text-slate-800">
+                                <span className="font-bold">{notif.title}</span>
                               </p>
-
-                              {notif.actions && (
-                                <div className="flex gap-2 mt-4">
-                                  <button className="px-5 py-2.5 rounded-xl bg-slate-100 text-slate-700 text-[11px] font-bold hover:bg-slate-200 transition-all active:scale-95">Decline</button>
-                                  <button className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/25 active:scale-95">View Paper</button>
-                                </div>
-                              )}
-
-                              {notif.file && (
-                                <div className="mt-3 p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-2.5 group-hover:bg-white transition-all border-dashed">
-                                  <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center">
-                                    <FileText size={14} className="text-blue-500" />
-                                  </div>
-                                  <span className="text-xs font-bold text-slate-600 truncate">{notif.file}</span>
-                                </div>
-                              )}
+                              <p className="text-[11px] text-slate-400 font-semibold tracking-tight">{notif.subtitle}</p>
                             </div>
                           </div>
                         </div>
                       ))}
+                      {notifications.length === 0 && (
+                        <div className="p-6 text-sm text-slate-500">No notifications yet.</div>
+                      )}
                     </div>
 
                     <div className="p-4 border-t border-slate-100 bg-slate-50/50 rounded-b-[20px] flex justify-center gap-[-8px]">
