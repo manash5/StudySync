@@ -16,8 +16,8 @@ soundfile
 
 # Speaker diarization (advanced)
 pyannote.audio==3.1.1
-torch==2.1.0
-torchaudio==2.1.0
+torch==2.1.0+cu118
+torchaudio==2.1.0+cu118
 huggingface_hub==0.23.4
 speechbrain==0.5.16
 
@@ -28,3 +28,7 @@ matplotlib
 
 # Whisper via Groq API
 groq
+
+
+# seperately install CUDA-enabled PyTorch 
+#pip install torch==2.1.0+cu118 torchaudio==2.1.0+cu118 --index-url https://download.pytorch.org/whl/cu118
