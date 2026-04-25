@@ -2,6 +2,7 @@
 **/node_modules/
 **/venv/ 
 **/__pycache__
+**/outputs/
 
 # Environment files 
 **/.env
@@ -14,6 +15,7 @@
 **/dist/
 **/build/
 **/coverage/
+
 
 # Logs
 **/*.log
