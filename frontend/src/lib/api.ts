@@ -171,11 +171,12 @@ export interface GeneratedStudySession {
   reason?: string;
 }
 
+// Replace the existing GeneratedStudyPlanResponse interface
 export interface GeneratedStudyPlanResponse {
-  message: string;
-  plans: StudyPlanItem[];
-  retention: StudyRetentionItem[];
-  lowRetentionNotes: StudyRetentionItem[];
+  message: string
+  plans: StudyPlanItem[]
+  retention: StudyRetentionItem[]         // maps to retention_by_note from FastAPI
+  lowRetentionNotes: StudyRetentionItem[] // maps to low_retention_notes from FastAPI
 }
 
 export interface StudyPlanStats {

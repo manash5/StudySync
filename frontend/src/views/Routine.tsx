@@ -1,7 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, X, Upload, Trash2 } from 'lucide-react'
+import { Plus, X, Upload, Trash2, BookOpen, GraduationCap } from 'lucide-react'
 import { aiApi, backendApi, type AiRoutineResponse, type RoutineItem, type Subject } from '../lib/api'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type StudySession = {
+  noteId: string | null
+  subject: string
+  topic: string
+  day: string
+  start_time: string
+  end_time: string
+  priority: 'High' | 'Medium' | 'Low'
+  color: string
+  retention_rate: number
+  reason: string | null
+}
+
+type CalendarEntry =
+  | { kind: 'routine'; data: RoutineItem }
+  | { kind: 'study'; data: StudySession }
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -12,9 +33,25 @@ const TIME_SLOTS = Array.from({ length: 25 }, (_, i) => {
   return `${String(displayHour).padStart(2, '0')}:00 ${period}`
 })
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function timeToMinutes(time: string): number {
-  const [hours, minutes] = time.split(':').map(Number)
-  return hours * 60 + minutes
+  const clean = time.trim().toUpperCase()
+
+  // Handle "HH:MM AM/PM"
+  const ampmMatch = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/)
+  if (ampmMatch) {
+    let hour = Number(ampmMatch[1])
+    const minute = Number(ampmMatch[2])
+    const period = ampmMatch[3]
+    if (period === 'PM' && hour !== 12) hour += 12
+    if (period === 'AM' && hour === 12) hour = 0
+    return hour * 60 + minute
+  }
+
+  // Handle "HH:MM" (24-hour)
+  const parts = clean.split(':').map(Number)
+  return parts[0] * 60 + (parts[1] ?? 0)
 }
 
 function getPositionAndHeight(startTime: string, endTime: string) {
@@ -22,7 +59,7 @@ function getPositionAndHeight(startTime: string, endTime: string) {
   const end = timeToMinutes(endTime)
   const startSlot = (start - 360) / 60
   const duration = (end - start) / 60
-  return { top: startSlot * 60, height: duration * 60 }
+  return { top: startSlot * 60, height: Math.max(duration * 60, 30) }
 }
 
 function convertTo24Hour(value: string): string {
@@ -31,12 +68,12 @@ function convertTo24Hour(value: string): string {
   let hour = Number(match[1])
   const minute = Number(match[2])
   const period = match[3].toUpperCase()
-
   if (period === 'PM' && hour !== 12) hour += 12
   if (period === 'AM' && hour === 12) hour = 0
-
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
+
+// ── Form state ────────────────────────────────────────────────────────────────
 
 type RoutineFormState = {
   subject: string
@@ -51,8 +88,13 @@ type RoutineFormState = {
   type: RoutineItem['type']
 }
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function Routine() {
   const [routines, setRoutines] = useState<RoutineItem[]>([])
+  const [studySessions, setStudySessions] = useState<StudySession[]>([])
+  const [isLoadingStudy, setIsLoadingStudy] = useState(false)
+
   const [showModal, setShowModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -75,6 +117,8 @@ export default function Routine() {
     type: 'class',
   })
 
+  // ── Data loading ─────────────────────────────────────────────────────────
+
   const loadRoutines = async () => {
     try {
       const rows = await backendApi.get<RoutineItem[]>('/api/routine')
@@ -84,13 +128,62 @@ export default function Routine() {
     }
   }
 
+  const loadStudySessions = async (currentRoutines: RoutineItem[]) => {
+    setIsLoadingStudy(true)
+    try {
+      // Fetch notes to pass into study-plan generator
+      const notes = await backendApi.get<unknown[]>('/notes').catch(() => [])
+
+      // Map _id (MongoDB) -> id so the backend StudyRoutine model validates correctly.
+      // Also normalise startTime/endTime to HH:MM 24-hour so the time parser
+      // never receives an AM/PM string it wasn't built for.
+      const mappedRoutines = currentRoutines.map(r => ({
+        id:        r._id,
+        subject:   r.subject,
+        day:       r.day,
+        startTime: r.startTime,
+        endTime:   r.endTime,
+        type:      r.type   ?? 'class',
+        color:     r.color  ?? '#10b981',
+        status:    r.status ?? 'active',
+      }))
+
+      const payload = {
+        notes,
+        routines: mappedRoutines,
+        study_window_start: '10:00',
+        study_window_end: '21:00',
+        minimum_retention_threshold: 50,
+      }
+
+      const result = await backendApi.post<{ sessions: StudySession[] }>(
+        '/study-plan/generate',
+        payload,
+      )
+      setStudySessions(result.sessions ?? [])
+    } catch {
+      // Study plan is non-critical — silently ignore if unavailable
+      setStudySessions([])
+    } finally {
+      setIsLoadingStudy(false)
+    }
+  }
+
   useEffect(() => {
     void loadRoutines()
   }, [])
 
+  // Re-generate study plan whenever routines change
+  useEffect(() => {
+    if (routines.length >= 0) {
+      void loadStudySessions(routines)
+    }
+  }, [routines])
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
   const handleAdd = async () => {
     if (!form.subject || !form.startTime || !form.endTime) return
-
     try {
       const created = await backendApi.post<RoutineItem>('/routine', form)
       setRoutines(prev => [...prev, created])
@@ -115,25 +208,21 @@ export default function Routine() {
   const handleRoutineScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
     if (!validTypes.includes(file.type)) {
       setError('Please upload a PNG, JPG, JPEG, or WEBP image.')
       return
     }
-
     setRoutineUploadFile(file)
     setError('')
   }
 
   const ensureRoutineSubject = async (subjectName: string, color: string): Promise<void> => {
     if (!subjectName.trim()) return
-
     const currentSubjects = await backendApi.get<Subject[]>('/subjects')
     const exists = currentSubjects.some(
-      subject => subject.name.trim().toLowerCase() === subjectName.trim().toLowerCase(),
+      s => s.name.trim().toLowerCase() === subjectName.trim().toLowerCase(),
     )
-
     if (!exists) {
       await backendApi.post('/subjects', { name: subjectName.trim(), color })
     }
@@ -149,20 +238,15 @@ export default function Routine() {
       setError('Please upload your routine screenshot first.')
       return
     }
-
     setIsAnalyzingRoutine(true)
     setError('')
-
     try {
       const formData = new FormData()
       formData.append('image', routineUploadFile)
-
       const aiResult = await aiApi.post<AiRoutineResponse>('/routine/analyze-routine', formData)
       const createdRows: RoutineItem[] = []
-
       for (const course of aiResult.courses || []) {
         await ensureRoutineSubject(course.course_name || course.course_code, '#10b981')
-
         for (const day of course.days || []) {
           if (!DAYS.includes(day)) continue
           const created = await backendApi.post<RoutineItem>('/routine', {
@@ -180,7 +264,6 @@ export default function Routine() {
           createdRows.push(created)
         }
       }
-
       setRoutines(prev => [...prev, ...createdRows])
       closeUploadRoutineModal()
     } catch (err) {
@@ -192,7 +275,6 @@ export default function Routine() {
 
   const confirmDelete = async () => {
     if (!deleteConfirmId) return
-
     try {
       await backendApi.delete(`/routine/${deleteConfirmId}`)
       setRoutines(prev => prev.filter(r => r._id !== deleteConfirmId))
@@ -203,6 +285,8 @@ export default function Routine() {
     }
   }
 
+  // ── Derived values ────────────────────────────────────────────────────────
+
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long' })
   const totalHours = useMemo(() => (routines.length > 0 ? 13 : 12), [routines.length])
 
@@ -212,22 +296,76 @@ export default function Routine() {
     paused: '#f59e0b',
   }
 
+  // Build per-day merged calendar entries
+  const entriesByDay = useMemo(() => {
+    const map: Record<string, CalendarEntry[]> = {}
+    for (const day of DAYS) {
+      const classEntries: CalendarEntry[] = routines
+        .filter(r => r.day === day)
+        .map(r => ({ kind: 'routine', data: r }))
+
+      const studyEntries: CalendarEntry[] = studySessions
+        .filter(s => s.day === day)
+        .map(s => ({ kind: 'study', data: s }))
+
+      map[day] = [...classEntries, ...studyEntries]
+    }
+    return map
+  }, [routines, studySessions])
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
   return (
     <div className="animate-fade-in pb-12">
       {error && (
-        <div className="mb-4 rounded-xl px-3 py-2 text-sm" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+        <div
+          className="mb-4 rounded-xl px-3 py-2 text-sm"
+          style={{
+            color: '#ef4444',
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.2)',
+          }}
+        >
           {error}
         </div>
       )}
 
+      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
         <div>
-          <h2 className="text-2xl font-bold" style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}>Weekly Schedule</h2>
-          <div className="flex items-center gap-2 mt-2 text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--text-muted)' }}>
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full" style={{ background: 'rgba(16,185,129,0.10)', color: '#10b981' }}>Classes</span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>Practice</span>
+          <h2
+            className="text-2xl font-bold"
+            style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}
+          >
+            Weekly Schedule
+          </h2>
+          <div
+            className="flex items-center gap-2 mt-2 text-[10px] font-black uppercase tracking-[0.16em]"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <span
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full"
+              style={{ background: 'rgba(16,185,129,0.10)', color: '#10b981' }}
+            >
+              <GraduationCap size={10} /> Classes
+            </span>
+            <span
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full"
+              style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
+            >
+              <BookOpen size={10} /> Study Sessions
+            </span>
+            {isLoadingStudy && (
+              <span
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full animate-pulse"
+                style={{ background: 'rgba(99,102,241,0.10)', color: '#818cf8' }}
+              >
+                Generating plan…
+              </span>
+            )}
           </div>
         </div>
+
         <div className="flex items-center gap-3">
           <button
             onClick={() => setShowModal(true)}
@@ -238,104 +376,131 @@ export default function Routine() {
           <button
             onClick={() => setShowUploadModal(true)}
             className="px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-all"
-            style={{ background: 'var(--input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+            style={{
+              background: 'var(--input-bg)',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-primary)',
+            }}
           >
             <Upload size={16} /> Import From Image
           </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border" style={{ borderColor: 'var(--border-color)', background: 'var(--card-bg)' }}>
+      {/* ── Calendar grid ── */}
+      <div
+        className="overflow-x-auto rounded-2xl border"
+        style={{ borderColor: 'var(--border-color)', background: 'var(--card-bg)' }}
+      >
         <div className="min-w-[1260px]">
-          <div className="flex border-b" style={{ borderColor: 'var(--border-color)', background: 'var(--bg-secondary)' }}>
-            <div className="sticky left-0 z-20 border-r" style={{ width: '100px', flex: '0 0 100px', borderColor: 'var(--border-color)', background: 'var(--bg-secondary)' }}></div>
-            {DAYS.map((day) => (
-              <div key={day} className="flex-1 p-4 text-center border-r last:border-0" style={{ borderColor: 'var(--border-color)' }}>
-                <div className="font-bold text-[10px] uppercase opacity-40 mb-1" style={{ color: 'var(--text-primary)' }}>{day.slice(0, 3)}</div>
-                <div className={`font-bold text-sm ${day === today ? 'text-blue-500' : ''}`} style={{ color: day === today ? '' : 'var(--text-primary)' }}>{day}</div>
+          {/* Day headers */}
+          <div
+            className="flex border-b"
+            style={{ borderColor: 'var(--border-color)', background: 'var(--bg-secondary)' }}
+          >
+            <div
+              className="sticky left-0 z-20 border-r"
+              style={{
+                width: '100px',
+                flex: '0 0 100px',
+                borderColor: 'var(--border-color)',
+                background: 'var(--bg-secondary)',
+              }}
+            />
+            {DAYS.map(day => (
+              <div
+                key={day}
+                className="flex-1 p-4 text-center border-r last:border-0"
+                style={{ borderColor: 'var(--border-color)' }}
+              >
+                <div
+                  className="font-bold text-[10px] uppercase opacity-40 mb-1"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  {day.slice(0, 3)}
+                </div>
+                <div
+                  className={`font-bold text-sm ${day === today ? 'text-blue-500' : ''}`}
+                  style={{ color: day === today ? '' : 'var(--text-primary)' }}
+                >
+                  {day}
+                </div>
               </div>
             ))}
           </div>
 
+          {/* Time grid + cards */}
           <div className="flex relative">
-            <div className="sticky left-0 z-10 border-r" style={{ width: '100px', flex: '0 0 100px', borderColor: 'var(--border-color)', background: 'var(--bg-primary)' }}>
-              {TIME_SLOTS.slice(0, totalHours + 1).map((time) => (
-                <div key={time}
-                     className="text-[10px] font-bold px-3 py-2 opacity-40 flex items-start"
-                     style={{ color: 'var(--text-primary)', height: '70px', borderBottom: `1px solid var(--border-color)` }}>
+            {/* Time labels */}
+            <div
+              className="sticky left-0 z-10 border-r"
+              style={{
+                width: '100px',
+                flex: '0 0 100px',
+                borderColor: 'var(--border-color)',
+                background: 'var(--bg-primary)',
+              }}
+            >
+              {TIME_SLOTS.slice(0, totalHours + 1).map(time => (
+                <div
+                  key={time}
+                  className="text-[10px] font-bold px-3 py-2 opacity-40 flex items-start"
+                  style={{
+                    color: 'var(--text-primary)',
+                    height: '70px',
+                    borderBottom: '1px solid var(--border-color)',
+                  }}
+                >
                   {time}
                 </div>
               ))}
             </div>
 
-            {DAYS.map((day) => (
-              <div key={day} className="flex-1 relative border-r last:border-0" style={{ borderColor: 'var(--border-color)' }}>
+            {/* Day columns */}
+            {DAYS.map(day => (
+              <div
+                key={day}
+                className="flex-1 relative border-r last:border-0"
+                style={{ borderColor: 'var(--border-color)' }}
+              >
+                {/* Hour row backgrounds */}
                 {Array.from({ length: totalHours + 1 }).map((_, i) => (
-                  <div key={i} style={{ height: '70px', borderBottom: '1px solid var(--border-color)' }} className="w-full opacity-[0.03] bg-blue-500"></div>
+                  <div
+                    key={i}
+                    style={{ height: '70px', borderBottom: '1px solid var(--border-color)' }}
+                    className="w-full opacity-[0.03] bg-blue-500"
+                  />
                 ))}
 
+                {/* Calendar entries */}
                 <div className="absolute inset-0">
-                  {routines
-                    .filter(r => r.day === day)
-                    .map((routine) => {
-                      const { top, height } = getPositionAndHeight(routine.startTime, routine.endTime)
-                      const accentColor = routine.type === 'study' ? '#f59e0b' : (routine.color || '#10b981')
-                      const statusColorVal = statusColor[routine.status] || '#3b82f6'
-
+                  {entriesByDay[day]?.map((entry, idx) => {
+                    if (entry.kind === 'routine') {
                       return (
-                        <div
-                          key={routine._id}
-                          onClick={() => navigate(`/app/notes/${encodeURIComponent(routine.subject)}`)}
-                          className="absolute left-1.5 right-1.5 rounded-xl p-3 border-l-[4px] shadow-sm group cursor-pointer transition-all hover:scale-[1.02] hover:z-20 overflow-hidden"
-                          style={{
-                            top: `${top}px`,
-                            height: `${height}px`,
-                            background: `${accentColor}12`,
-                            borderColor: accentColor,
-                            borderStyle: 'solid',
-                            borderWidth: '1px 1px 1px 4px',
-                            opacity: routine.status === 'cancelled' ? 0.4 : 1,
+                        <RoutineCard
+                          key={`r-${entry.data._id}`}
+                          routine={entry.data}
+                          statusColor={statusColor}
+                          onNavigate={subject =>
+                            navigate(`/app/notes/${encodeURIComponent(subject)}`)
+                          }
+                          onDelete={id => {
+                            setDeleteConfirmId(id)
+                            setShowDeleteConfirm(true)
                           }}
-                        >
-                          <div className="flex flex-col h-full justify-between">
-                            <div>
-                               <div className="flex items-center justify-between gap-1 mb-1">
-                                  <span className="text-[9px] font-black tracking-tighter opacity-70 whitespace-nowrap" style={{ color: accentColor }}>
-                                    {routine.startTime} — {routine.endTime}
-                                  </span>
-                                  {routine.type === 'study' && (
-                                    <span className="text-[8px] font-black uppercase px-1 rounded-sm" style={{ background: 'rgba(245,158,11,0.18)', color: '#f59e0b' }}>
-                                      Practice
-                                    </span>
-                                  )}
-                                  {routine.status !== 'active' && (
-                                    <span className="text-[8px] font-black uppercase px-1 rounded-sm" style={{ background: `${statusColorVal}20`, color: statusColorVal }}>
-                                      {routine.status}
-                                    </span>
-                                  )}
-                               </div>
-                               <h4 className="font-bold text-xs leading-tight line-clamp-2" style={{ color: 'var(--text-primary)' }}>
-                                 {routine.subject}
-                               </h4>
-                            </div>
-
-                            <div className="flex items-center justify-between gap-2 mt-auto">
-                              <span className="text-[9px] font-bold opacity-40 truncate" style={{ color: 'var(--text-primary)' }}>{routine.room || routine.code || ''}</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setDeleteConfirmId(routine._id)
-                                  setShowDeleteConfirm(true)
-                                }}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/10"
-                              >
-                                <Trash2 size={12} className="text-red-500" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
+                        />
                       )
-                    })}
+                    }
+                    return (
+                      <StudySessionCard
+                        key={`s-${idx}-${entry.data.day}-${entry.data.start_time}`}
+                        session={entry.data}
+                        onNavigate={subject =>
+                          navigate(`/app/notes/${encodeURIComponent(subject)}`)
+                        }
+                      />
+                    )
+                  })}
                 </div>
               </div>
             ))}
@@ -343,71 +508,339 @@ export default function Routine() {
         </div>
       </div>
 
+      {/* ── Add slot modal ── */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
-          <div className="w-full max-w-md rounded-3xl p-8 animate-fade-in-up shadow-2xl" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)' }}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl p-8 animate-fade-in-up shadow-2xl"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)' }}
+          >
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold" style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}>Add Class</h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white"><X size={20} /></button>
+              <h3
+                className="text-xl font-bold"
+                style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}
+              >
+                Add Class
+              </h3>
+              <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white">
+                <X size={20} />
+              </button>
             </div>
             <div className="space-y-4">
-              <input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="Subject Name" className="input-field w-full p-3 rounded-xl" />
+              <input
+                value={form.subject}
+                onChange={e => setForm({ ...form, subject: e.target.value })}
+                placeholder="Subject Name"
+                className="input-field w-full p-3 rounded-xl"
+              />
               <div className="grid grid-cols-2 gap-4">
-                <select value={form.day} onChange={e => setForm({ ...form, day: e.target.value })} className="input-field p-3 rounded-xl">
-                  {DAYS.map(d => <option key={d}>{d}</option>)}
+                <select
+                  value={form.day}
+                  onChange={e => setForm({ ...form, day: e.target.value })}
+                  className="input-field p-3 rounded-xl"
+                >
+                  {DAYS.map(d => (
+                    <option key={d}>{d}</option>
+                  ))}
                 </select>
-                <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as RoutineItem['status'] })} className="input-field p-3 rounded-xl">
+                <select
+                  value={form.status}
+                  onChange={e =>
+                    setForm({ ...form, status: e.target.value as RoutineItem['status'] })
+                  }
+                  className="input-field p-3 rounded-xl"
+                >
                   <option value="active">Active</option>
                   <option value="paused">Paused</option>
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <input type="time" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} className="input-field p-3 rounded-xl" />
-                <input type="time" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} className="input-field p-3 rounded-xl" />
+                <input
+                  type="time"
+                  value={form.startTime}
+                  onChange={e => setForm({ ...form, startTime: e.target.value })}
+                  className="input-field p-3 rounded-xl"
+                />
+                <input
+                  type="time"
+                  value={form.endTime}
+                  onChange={e => setForm({ ...form, endTime: e.target.value })}
+                  className="input-field p-3 rounded-xl"
+                />
               </div>
-              <input value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} placeholder="Room (Optional)" className="input-field w-full p-3 rounded-xl" />
+              <input
+                value={form.room}
+                onChange={e => setForm({ ...form, room: e.target.value })}
+                placeholder="Room (Optional)"
+                className="input-field w-full p-3 rounded-xl"
+              />
             </div>
             <div className="flex gap-3 mt-8">
-              <button onClick={() => setShowModal(false)} className="flex-1 py-3 rounded-xl font-bold" style={{ background: 'var(--input-bg)', color: 'var(--text-secondary)' }}>Cancel</button>
-              <button onClick={() => void handleAdd()} className="flex-1 py-3 rounded-xl font-bold bg-blue-600 text-white shadow-lg">Add Class</button>
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex-1 py-3 rounded-xl font-bold"
+                style={{ background: 'var(--input-bg)', color: 'var(--text-secondary)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleAdd()}
+                className="flex-1 py-3 rounded-xl font-bold bg-blue-600 text-white shadow-lg"
+              >
+                Add Class
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── Delete confirm modal ── */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-sm glass-card rounded-2xl p-6 border-red-500/20">
-            <h3 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Delete Slot?</h3>
-            <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>Are you sure you want to remove this session from your routine?</p>
+            <h3 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+              Delete Slot?
+            </h3>
+            <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>
+              Are you sure you want to remove this session from your routine?
+            </p>
             <div className="flex gap-3">
-              <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-2.5 rounded-xl font-bold" style={{ background: 'var(--input-bg)', color: 'var(--text-secondary)' }}>Cancel</button>
-              <button onClick={() => void confirmDelete()} className="flex-1 py-2.5 rounded-xl font-bold bg-red-600 text-white shadow-lg shadow-red-600/20">Delete</button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 py-2.5 rounded-xl font-bold"
+                style={{ background: 'var(--input-bg)', color: 'var(--text-secondary)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void confirmDelete()}
+                className="flex-1 py-2.5 rounded-xl font-bold bg-red-600 text-white shadow-lg shadow-red-600/20"
+              >
+                Delete
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── Upload modal ── */}
       {showUploadModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-md glass-card rounded-2xl p-8">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Import Timetable</h3>
-              <button onClick={closeUploadRoutineModal} className="text-slate-500"><X size={20} /></button>
+              <h3 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                Import Timetable
+              </h3>
+              <button onClick={closeUploadRoutineModal} className="text-slate-500">
+                <X size={20} />
+              </button>
             </div>
-            <label className="flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-2xl cursor-pointer hover:bg-blue-500/5 transition-all" style={{ borderColor: 'var(--border-color)' }}>
+            <label
+              className="flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-2xl cursor-pointer hover:bg-blue-500/5 transition-all"
+              style={{ borderColor: 'var(--border-color)' }}
+            >
               <Upload size={32} className="text-blue-500 mb-4" />
               <span className="text-sm font-bold" style={{ color: 'var(--text-secondary)' }}>
                 {routineUploadFile ? routineUploadFile.name : 'Choose routine screenshot'}
               </span>
-              <input type="file" className="hidden" onChange={handleRoutineScreenshotChange} accept="image/*" />
+              <input
+                type="file"
+                className="hidden"
+                onChange={handleRoutineScreenshotChange}
+                accept="image/*"
+              />
             </label>
-            <button onClick={() => void analyzeAndImportRoutine()} disabled={isAnalyzingRoutine} className="w-full mt-6 py-4 rounded-xl font-black bg-blue-600 text-white shadow-lg disabled:opacity-50">
+            <button
+              onClick={() => void analyzeAndImportRoutine()}
+              disabled={isAnalyzingRoutine}
+              className="w-full mt-6 py-4 rounded-xl font-black bg-blue-600 text-white shadow-lg disabled:opacity-50"
+            >
               {isAnalyzingRoutine ? 'Analyzing Timetable...' : 'Import Routine'}
             </button>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function RoutineCard({
+  routine,
+  statusColor,
+  onNavigate,
+  onDelete,
+}: {
+  routine: RoutineItem
+  statusColor: Record<RoutineItem['status'], string>
+  onNavigate: (subject: string) => void
+  onDelete: (id: string) => void
+}) {
+  const { top, height } = getPositionAndHeight(routine.startTime, routine.endTime)
+  const accentColor = routine.type === 'study' ? '#f59e0b' : (routine.color || '#10b981')
+  const statusColorVal = statusColor[routine.status] || '#3b82f6'
+
+  return (
+    <div
+      onClick={() => onNavigate(routine.subject)}
+      className="absolute left-1.5 right-1.5 rounded-xl p-3 border-l-[4px] shadow-sm group cursor-pointer transition-all hover:scale-[1.02] hover:z-20 overflow-hidden"
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        background: `${accentColor}12`,
+        borderColor: accentColor,
+        borderStyle: 'solid',
+        borderWidth: '1px 1px 1px 4px',
+        opacity: routine.status === 'cancelled' ? 0.4 : 1,
+      }}
+    >
+      <div className="flex flex-col h-full justify-between">
+        <div>
+          <div className="flex items-center justify-between gap-1 mb-1">
+            <span
+              className="text-[9px] font-black tracking-tighter opacity-70 whitespace-nowrap"
+              style={{ color: accentColor }}
+            >
+              {routine.startTime} — {routine.endTime}
+            </span>
+            {routine.type === 'study' && (
+              <span
+                className="text-[8px] font-black uppercase px-1 rounded-sm"
+                style={{ background: 'rgba(245,158,11,0.18)', color: '#f59e0b' }}
+              >
+                Practice
+              </span>
+            )}
+            {routine.status !== 'active' && (
+              <span
+                className="text-[8px] font-black uppercase px-1 rounded-sm"
+                style={{ background: `${statusColorVal}20`, color: statusColorVal }}
+              >
+                {routine.status}
+              </span>
+            )}
+          </div>
+          <h4
+            className="font-bold text-xs leading-tight line-clamp-2"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {routine.subject}
+          </h4>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-auto">
+          <span
+            className="text-[9px] font-bold opacity-40 truncate"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {routine.room || routine.code || ''}
+          </span>
+          <button
+            onClick={e => {
+              e.stopPropagation()
+              onDelete(routine._id)
+            }}
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/10"
+          >
+            <Trash2 size={12} className="text-red-500" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StudySessionCard({
+  session,
+  onNavigate,
+}: {
+  session: StudySession
+  onNavigate: (subject: string) => void
+}) {
+  const { top, height } = getPositionAndHeight(session.start_time, session.end_time)
+
+  const priorityColors: Record<string, { accent: string; bg: string }> = {
+    High:   { accent: '#ef4444', bg: 'rgba(239,68,68,0.10)' },
+    Medium: { accent: '#f59e0b', bg: 'rgba(245,158,11,0.10)' },
+    Low:    { accent: '#f59e0b', bg: 'rgba(245,158,11,0.07)' },
+  }
+
+  const { accent, bg } = priorityColors[session.priority] ?? priorityColors.Medium
+
+  return (
+    <div
+      onClick={() => onNavigate(session.subject)}
+      title={session.reason ?? undefined}
+      className="absolute left-1.5 right-1.5 rounded-xl p-3 border-l-[4px] shadow-sm cursor-pointer transition-all hover:scale-[1.02] hover:z-20 overflow-hidden group"
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        background: bg,
+        borderColor: accent,
+        borderStyle: 'solid',
+        borderWidth: '1px 1px 1px 4px',
+      }}
+    >
+      <div className="flex flex-col h-full justify-between">
+        <div>
+          <div className="flex items-center justify-between gap-1 mb-1 flex-wrap">
+            <span
+              className="text-[9px] font-black tracking-tighter opacity-70 whitespace-nowrap"
+              style={{ color: accent }}
+            >
+              {session.start_time} — {session.end_time}
+            </span>
+            <span
+              className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-sm flex items-center gap-0.5"
+              style={{ background: `${accent}22`, color: accent }}
+            >
+              <BookOpen size={8} />
+              {session.priority === 'High' ? 'Urgent' : 'Study'}
+            </span>
+          </div>
+          <h4
+            className="font-bold text-xs leading-tight line-clamp-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {session.subject}
+          </h4>
+          {height >= 55 && (
+            <p
+              className="text-[9px] mt-0.5 line-clamp-1 opacity-60"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {session.topic}
+            </p>
+          )}
+        </div>
+
+        {height >= 70 && (
+          <div className="flex items-center gap-1 mt-auto">
+            <div
+              className="flex-1 rounded-full overflow-hidden"
+              style={{ height: '3px', background: 'rgba(255,255,255,0.08)' }}
+            >
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.min(session.retention_rate, 100)}%`,
+                  background: accent,
+                  opacity: 0.7,
+                }}
+              />
+            </div>
+            <span
+              className="text-[8px] font-black tabular-nums"
+              style={{ color: accent, opacity: 0.8 }}
+            >
+              {Math.round(session.retention_rate)}%
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
