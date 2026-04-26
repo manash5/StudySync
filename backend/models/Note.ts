@@ -13,6 +13,8 @@ export interface INote extends Document {
   importantPoints: string[];
   notes: string;
   reviewed: boolean;
+  lastReviewedAt?: Date;
+  reviewCount: number;
   createdAt: Date;
 }
 
@@ -38,6 +40,8 @@ const noteSchema = new Schema<INote>(
     importantPoints: [{ type: String }],
     notes: { type: String, required: true },
     reviewed: { type: Boolean, default: false },
+    lastReviewedAt: { type: Date },
+    reviewCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

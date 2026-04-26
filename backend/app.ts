@@ -2,6 +2,8 @@
 import express, { Application, Request, Response } from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import path from "path";
+import { mkdirSync } from "fs";
 import connectDB from "./config/database";
 import { protect, AuthRequest } from "./middleware/auth";
 
@@ -9,7 +11,7 @@ import { protect, AuthRequest } from "./middleware/auth";
 import authroutes from "./routes/auth";
 import subjectRoutes from "./routes/subjects";
 import noteRoutes from "./routes/notes";
-import lectureRoutes from "./routes/lectures";
+import lectureRoutes from "./routes/lecture";
 import studyPlanRoutes from "./routes/studyPlan";
 import routineRoutes from "./routes/routine";
 import settingsRoutes from "./routes/settings";
@@ -19,12 +21,14 @@ dotenv.config();
 connectDB();
 
 const app: Application = express();
+const uploadsDir = path.resolve(process.cwd(), "uploads");
+mkdirSync(uploadsDir, { recursive: true });
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
-app.use("/uploads", express.static("uploads"));
+app.use("/uploads", express.static(uploadsDir));
 
 // Routes
 app.use("/api/auth", authroutes);

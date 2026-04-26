@@ -8,6 +8,8 @@ export interface IStudyPlan extends Document {
   status: "Pending" | "Completed";
   priority: "High" | "Medium" | "Low";
   date: Date;
+  source?: "manual" | "generated";
+  noteId?: mongoose.Types.ObjectId;
   createdAt: Date;
 }
 
@@ -32,6 +34,12 @@ const studyPlanSchema = new Schema<IStudyPlan>(
       default: "Medium",
     },
     date: { type: Date, default: Date.now },
+    source: {
+      type: String,
+      enum: ["manual", "generated"],
+      default: "manual",
+    },
+    noteId: { type: Schema.Types.ObjectId, ref: "Note" },
   },
   { timestamps: true }
 );

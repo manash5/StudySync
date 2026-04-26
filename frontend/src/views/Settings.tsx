@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Save, Bell, Lock, User, LogOut, Trash2, Eye, EyeOff } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
+import { useAuth } from '../contexts/AuthContext'
+import { backendApi, type Settings as SettingsResponse } from '../lib/api'
 
 interface UserSettings {
   fullName: string
@@ -12,12 +14,14 @@ interface UserSettings {
 
 export default function Settings() {
   const { theme, toggleTheme } = useTheme()
+  const { user, refreshMe, logout } = useAuth()
+
   const [settings, setSettings] = useState<UserSettings>({
-    fullName: 'Prashant Khadka',
-    email: 'prashant@example.com',
-    phone: '+977 9800123456',
-    university: 'Softwarica College',
-    department: 'Computer Science Engineering'
+    fullName: '',
+    email: '',
+    phone: '',
+    university: '',
+    department: '',
   })
 
   const [notifications, setNotifications] = useState({
@@ -31,6 +35,42 @@ export default function Settings() {
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' })
   const [showPasswords, setShowPasswords] = useState({ current: false, new: false })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  useEffect(() => {
+    const run = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const me = await backendApi.get<{ name: string; email: string; phone?: string; university?: string; department?: string }>('/auth/me')
+        const notificationSettings = await backendApi.get<SettingsResponse>('/api/settings')
+
+        setSettings({
+          fullName: me.name || '',
+          email: me.email || '',
+          phone: me.phone || '',
+          university: me.university || '',
+          department: me.department || '',
+        })
+
+        setNotifications({
+          emailNotifications: notificationSettings.emailNotifications,
+          lectureReminders: notificationSettings.lectureReminders,
+          classReminders: notificationSettings.classReminders,
+          assignmentDue: notificationSettings.assignmentDue,
+          weeklyDigest: notificationSettings.weeklyDigest,
+        })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load settings')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void run()
+  }, [])
 
   const handleSettingsChange = (field: keyof UserSettings, value: string) => {
     setSettings(prev => ({ ...prev, [field]: value }))
@@ -40,17 +80,95 @@ export default function Settings() {
     setNotifications(prev => ({ ...prev, [field]: !prev[field] }))
   }
 
+  const saveProfile = async () => {
+    setError('')
+    setSuccess('')
+    try {
+      await backendApi.put('/auth/profile', {
+        name: settings.fullName,
+        email: settings.email,
+        phone: settings.phone,
+        university: settings.university,
+        department: settings.department,
+      })
+      await refreshMe()
+      setSuccess('Profile saved successfully.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save profile')
+    }
+  }
+
+  const saveNotifications = async () => {
+    setError('')
+    setSuccess('')
+    try {
+      await backendApi.put('/settings', {
+        ...notifications,
+        theme,
+      })
+      setSuccess('Notification settings updated.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save notification settings')
+    }
+  }
+
+  const updatePassword = async () => {
+    if (!passwords.current || !passwords.new || !passwords.confirm) {
+      setError('Please fill all password fields.')
+      return
+    }
+
+    if (passwords.new !== passwords.confirm) {
+      setError('New password and confirm password do not match.')
+      return
+    }
+
+    setError('')
+    setSuccess('')
+    try {
+      await backendApi.put('/auth/password', {
+        currentPassword: passwords.current,
+        newPassword: passwords.new,
+      })
+      setSuccess('Password updated successfully.')
+      setShowPasswordForm(false)
+      setPasswords({ current: '', new: '', confirm: '' })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update password')
+    }
+  }
+
+  const handleThemeToggle = async () => {
+    toggleTheme()
+    try {
+      await backendApi.put('/settings', {
+        ...notifications,
+        theme: theme === 'dark' ? 'light' : 'dark',
+      })
+    } catch {
+      // Theme still changes locally even if API write fails.
+    }
+  }
+
   return (
     <div className="animate-fade-in max-w-4xl">
-      {/* Header */}
       <div className="mb-8">
         <h2 className="text-2xl font-bold" style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}>Settings</h2>
         <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Manage your account preferences and configurations</p>
       </div>
 
-      {/* Settings Sections */}
+      {error && (
+        <div className="mb-4 rounded-xl px-3 py-2 text-sm" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="mb-4 rounded-xl px-3 py-2 text-sm" style={{ color: '#10b981', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
+          {success}
+        </div>
+      )}
+
       <div className="space-y-6">
-        {/* Profile Settings */}
         <div className="glass-card rounded-2xl p-6" style={{ border: '1px solid var(--border-color)' }}>
           <h3 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <User size={20} /> Profile Settings
@@ -64,6 +182,7 @@ export default function Settings() {
                   value={settings.fullName}
                   onChange={e => handleSettingsChange('fullName', e.target.value)}
                   className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm"
+                  disabled={loading}
                 />
               </div>
               <div>
@@ -73,6 +192,7 @@ export default function Settings() {
                   onChange={e => handleSettingsChange('email', e.target.value)}
                   type="email"
                   className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm"
+                  disabled={loading}
                 />
               </div>
               <div>
@@ -81,6 +201,7 @@ export default function Settings() {
                   value={settings.phone}
                   onChange={e => handleSettingsChange('phone', e.target.value)}
                   className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm"
+                  disabled={loading}
                 />
               </div>
               <div>
@@ -89,6 +210,7 @@ export default function Settings() {
                   value={settings.university}
                   onChange={e => handleSettingsChange('university', e.target.value)}
                   className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm"
+                  disabled={loading}
                 />
               </div>
             </div>
@@ -98,16 +220,16 @@ export default function Settings() {
                 value={settings.department}
                 onChange={e => handleSettingsChange('department', e.target.value)}
                 className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm"
+                disabled={loading}
               />
             </div>
 
-            <button className="btn-primary px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 mt-4">
+            <button onClick={() => void saveProfile()} className="btn-primary px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 mt-4">
               <Save size={16} /> Save Profile
             </button>
           </div>
         </div>
 
-        {/* Notification Settings */}
         <div className="glass-card rounded-2xl p-6" style={{ border: '1px solid var(--border-color)' }}>
           <h3 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Bell size={20} /> Notification Preferences
@@ -120,7 +242,7 @@ export default function Settings() {
                 lectureReminders: 'Lecture Reminders',
                 classReminders: 'Class Reminders',
                 assignmentDue: 'Assignment Due Alerts',
-                weeklyDigest: 'Weekly Study Digest'
+                weeklyDigest: 'Weekly Study Digest',
               }[key as keyof typeof notifications]
 
               return (
@@ -137,9 +259,12 @@ export default function Settings() {
               )
             })}
           </div>
+
+          <button onClick={() => void saveNotifications()} className="btn-primary px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 mt-4">
+            <Save size={16} /> Save Notifications
+          </button>
         </div>
 
-        {/* Theme Settings */}
         <div className="glass-card rounded-2xl p-6" style={{ border: '1px solid var(--border-color)' }}>
           <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Theme</h3>
 
@@ -153,7 +278,7 @@ export default function Settings() {
               </p>
             </div>
             <button
-              onClick={toggleTheme}
+              onClick={() => void handleThemeToggle()}
               className="btn-primary px-6 py-2.5 rounded-xl font-semibold text-sm whitespace-nowrap"
             >
               Switch to {theme === 'dark' ? 'Light' : 'Dark'} Mode
@@ -161,7 +286,6 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Password Settings */}
         <div className="glass-card rounded-2xl p-6" style={{ border: '1px solid var(--border-color)' }}>
           <h3 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Lock size={20} /> Password & Security
@@ -235,7 +359,7 @@ export default function Settings() {
                 >
                   Cancel
                 </button>
-                <button className="btn-primary flex-1 py-2.5 rounded-xl text-sm font-semibold">
+                <button onClick={() => void updatePassword()} className="btn-primary flex-1 py-2.5 rounded-xl text-sm font-semibold">
                   Update Password
                 </button>
               </div>
@@ -243,7 +367,6 @@ export default function Settings() {
           )}
         </div>
 
-        {/* Danger Zone */}
         <div className="glass-card rounded-2xl p-6" style={{ border: '1px solid rgba(239, 68, 68, 0.2)', background: 'rgba(239, 68, 68, 0.03)' }}>
           <h3 className="text-lg font-bold mb-4" style={{ color: '#ef4444' }}>Danger Zone</h3>
 
@@ -251,7 +374,7 @@ export default function Settings() {
             <div>
               <p style={{ color: 'var(--text-secondary)' }} className="mb-2 font-medium">Delete Account</p>
               <p style={{ color: 'var(--text-muted)' }} className="text-sm mb-3">
-                Permanently delete your account and all associated data. This action cannot be undone.
+                Permanently delete your account and all associated data.
               </p>
               <button className="px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all"
                       style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444' }}>
@@ -262,9 +385,9 @@ export default function Settings() {
             <div className="border-t pt-4" style={{ borderColor: 'rgba(239, 68, 68, 0.2)' }}>
               <p style={{ color: 'var(--text-secondary)' }} className="mb-2 font-medium">Sign Out</p>
               <p style={{ color: 'var(--text-muted)' }} className="text-sm mb-3">
-                Sign out from this device and all other sessions.
+                Sign out from this device.
               </p>
-              <button className="px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all"
+              <button onClick={logout} className="px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all"
                       style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444' }}>
                 <LogOut size={16} /> Sign Out
               </button>
@@ -272,6 +395,12 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {user?.name && (
+        <div className="mt-6 text-xs" style={{ color: 'var(--text-muted)' }}>
+          Logged in as {user.name}
+        </div>
+      )}
     </div>
   )
 }

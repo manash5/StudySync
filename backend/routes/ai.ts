@@ -154,9 +154,26 @@ router.post(
 
       for (let i = 0; i < detectedClasses.length; i++) {
         const cls = detectedClasses[i];
+        const subjectName = cls.subject?.trim();
+
+        if (subjectName) {
+          const subjectExists = await Subject.findOne({
+            userId: req.user?._id,
+            name: subjectName,
+          });
+
+          if (!subjectExists) {
+            await Subject.create({
+              userId: req.user?._id,
+              name: subjectName,
+              color: colors[i % colors.length],
+            });
+          }
+        }
+
         const routine = await Routine.create({
           userId: req.user?._id,
-          subject: cls.subject,
+          subject: subjectName,
           day: cls.day,
           startTime: cls.startTime,
           endTime: cls.endTime,
