@@ -57,11 +57,31 @@ router.post("/", protect, async (req: AuthRequest, res: Response) => {
 // @access  Private
 router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
   try {
-    const note = await Note.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user?._id },
-      req.body,
-      { new: true }
-    );
+    const note = await Note.findOne({
+      _id: req.params.id,
+      userId: req.user?._id,
+    });
+
+    if (!note) {
+      return res.status(404).json({ message: "Note not found" });
+    }
+
+    if (typeof req.body.reviewed === "boolean") {
+      const nextReviewed = req.body.reviewed;
+      if (nextReviewed && !note.reviewed) {
+        note.lastReviewedAt = new Date();
+        note.reviewCount = (note.reviewCount || 0) + 1;
+      }
+      note.reviewed = nextReviewed;
+    }
+
+    Object.entries(req.body).forEach(([key, value]) => {
+      if (key !== "reviewed") {
+        (note as any)[key] = value;
+      }
+    });
+
+    await note.save();
     res.json(note);
   } catch (error) {
     res.status(500).json({ message: "Server error", error });

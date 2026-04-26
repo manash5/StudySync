@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sparkles, CheckCircle2, ChevronRight } from 'lucide-react'
-import { backendApi, type StudyPlanItem, type StudyPlanStats } from '../lib/api'
+import { Sparkles, CheckCircle2, ChevronRight, WandSparkles } from 'lucide-react'
+import { backendApi, type StudyPlanItem, type StudyPlanStats, type GeneratedStudyPlanResponse } from '../lib/api'
 
 const subjectColors: Record<string, string> = {
   'Machine Learning': '#3b82f6',
@@ -12,6 +12,7 @@ const subjectColors: Record<string, string> = {
 export default function StudyPlan() {
   const [plans, setPlans] = useState<StudyPlanItem[]>([])
   const [stats, setStats] = useState<StudyPlanStats>({ total: 0, completed: 0, pending: 0, completionRate: 0 })
+  const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
 
@@ -19,8 +20,8 @@ export default function StudyPlan() {
     setError('')
     try {
       const [plansRes, statsRes] = await Promise.all([
-        backendApi.get<StudyPlanItem[]>('/api/study-plan'),
-        backendApi.get<StudyPlanStats>('/api/study-plan/stats'),
+        backendApi.get<StudyPlanItem[]>('/study-plan'),
+        backendApi.get<StudyPlanStats>('/study-plan/stats'),
       ])
       setPlans(plansRes)
       setStats(statsRes)
@@ -32,6 +33,21 @@ export default function StudyPlan() {
   useEffect(() => {
     void loadData()
   }, [])
+
+  const generateStudyPlan = async () => {
+    setIsGenerating(true)
+    setError('')
+
+    try {
+      const result = await backendApi.post<GeneratedStudyPlanResponse>('/study-plan/generate', {})
+      setPlans(result.plans)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate study plan')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   const togglePlan = async (id: string) => {
     try {
@@ -148,18 +164,33 @@ export default function StudyPlan() {
                   transition: 'width 0.7s ease',
                 }} />
               </div>
+              <button
+                onClick={() => void generateStudyPlan()}
+                disabled={isGenerating}
+                className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-black uppercase tracking-[0.18em] transition-all disabled:opacity-60"
+                style={{ background: 'rgba(255,255,255,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.18)' }}
+              >
+                <WandSparkles size={14} /> {isGenerating ? 'Generating...' : 'Generate Study Plan'}
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      <div>
+      <div className="flex items-center justify-between gap-3">
         <h3 className="text-[10px] font-black uppercase tracking-[0.18em] px-1 mb-5" style={{ color: 'var(--text-muted)' }}>
           Active Study Blocks
         </h3>
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--text-muted)' }}>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full" style={{ background: 'rgba(16,185,129,0.10)', color: '#10b981' }}>Class</span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>Practice</span>
+        </div>
+      </div>
+
+      <div>
         <div className="space-y-4">
           {plans.map((item) => {
-            const accent = subjectColors[item.subject] ?? '#3b82f6'
+            const accent = item.source === 'generated' ? '#f59e0b' : (subjectColors[item.subject] ?? '#3b82f6')
             const isDone = item.status === 'Completed'
             return (
               <div
@@ -185,6 +216,11 @@ export default function StudyPlan() {
                       <span className="text-[10px] font-bold" style={{ color: 'var(--text-muted)' }}>
                         {item.time}
                       </span>
+                      {item.source === 'generated' && (
+                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500">
+                          Practice
+                        </span>
+                      )}
                       {item.priority === 'High' && !isDone && (
                         <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-red-500/10 text-red-500">
                           HIGH

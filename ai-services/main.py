@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pipeline.config import load_pipeline_settings_from_env
 from pipeline.exceptions import PipelineConfigError
 from pipeline.orchestrator import LecturerSpeechPipeline
-from routers import routine_analyzer, lecture_upload
+from routers import lecture_upload, routine_analyzer, study_plan
 
 load_dotenv()
 
@@ -60,3 +60,4 @@ def startup_checks() -> None:
 # ── Routers ───────────────────────────────────────────
 app.include_router(lecture_upload.router, prefix="/lecture")
 app.include_router(routine_analyzer.router, prefix="/routine")
+app.include_router(study_plan.router, prefix="/study-plan")

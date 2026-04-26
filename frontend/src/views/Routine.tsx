@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, X, Upload, Trash2 } from 'lucide-react'
-import { aiApi, backendApi, type AiRoutineResponse, type RoutineItem } from '../lib/api'
+import { aiApi, backendApi, type AiRoutineResponse, type RoutineItem, type Subject } from '../lib/api'
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -126,6 +126,19 @@ export default function Routine() {
     setError('')
   }
 
+  const ensureRoutineSubject = async (subjectName: string, color: string): Promise<void> => {
+    if (!subjectName.trim()) return
+
+    const currentSubjects = await backendApi.get<Subject[]>('/subjects')
+    const exists = currentSubjects.some(
+      subject => subject.name.trim().toLowerCase() === subjectName.trim().toLowerCase(),
+    )
+
+    if (!exists) {
+      await backendApi.post('/subjects', { name: subjectName.trim(), color })
+    }
+  }
+
   const closeUploadRoutineModal = () => {
     setShowUploadModal(false)
     setRoutineUploadFile(null)
@@ -148,6 +161,8 @@ export default function Routine() {
       const createdRows: RoutineItem[] = []
 
       for (const course of aiResult.courses || []) {
+        await ensureRoutineSubject(course.course_name || course.course_code, '#10b981')
+
         for (const day of course.days || []) {
           if (!DAYS.includes(day)) continue
           const created = await backendApi.post<RoutineItem>('/routine', {
@@ -208,6 +223,10 @@ export default function Routine() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Sora, sans-serif', color: 'var(--text-primary)' }}>Weekly Schedule</h2>
+          <div className="flex items-center gap-2 mt-2 text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--text-muted)' }}>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full" style={{ background: 'rgba(16,185,129,0.10)', color: '#10b981' }}>Classes</span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>Practice</span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -260,7 +279,7 @@ export default function Routine() {
                     .filter(r => r.day === day)
                     .map((routine) => {
                       const { top, height } = getPositionAndHeight(routine.startTime, routine.endTime)
-                      const accentColor = routine.type === 'study' ? '#ef4444' : (routine.color || '#10b981')
+                      const accentColor = routine.type === 'study' ? '#f59e0b' : (routine.color || '#10b981')
                       const statusColorVal = statusColor[routine.status] || '#3b82f6'
 
                       return (
@@ -284,6 +303,11 @@ export default function Routine() {
                                   <span className="text-[9px] font-black tracking-tighter opacity-70 whitespace-nowrap" style={{ color: accentColor }}>
                                     {routine.startTime} — {routine.endTime}
                                   </span>
+                                  {routine.type === 'study' && (
+                                    <span className="text-[8px] font-black uppercase px-1 rounded-sm" style={{ background: 'rgba(245,158,11,0.18)', color: '#f59e0b' }}>
+                                      Practice
+                                    </span>
+                                  )}
                                   {routine.status !== 'active' && (
                                     <span className="text-[8px] font-black uppercase px-1 rounded-sm" style={{ background: `${statusColorVal}20`, color: statusColorVal }}>
                                       {routine.status}

@@ -25,7 +25,7 @@ export default function Dashboard() {
     try {
       const [subjectsRes, planRes] = await Promise.all([
         backendApi.get<Subject[]>('/subjects'),
-        backendApi.get<StudyPlanItem[]>('/api/study-plan'),
+        backendApi.get<StudyPlanItem[]>('/study-plan'),
       ])
       setSubjects(subjectsRes)
       setTasks(planRes)

@@ -146,6 +146,36 @@ export interface StudyPlanItem {
   status: "Pending" | "Completed";
   priority: "High" | "Medium" | "Low";
   date: string;
+  source?: "manual" | "generated";
+  noteId?: string;
+}
+
+export interface StudyRetentionItem {
+  noteId: string;
+  subject: string;
+  title: string;
+  retentionRate: number;
+  nextReviewDays: number;
+}
+
+export interface GeneratedStudySession {
+  noteId?: string;
+  subject: string;
+  topic: string;
+  day: string;
+  start_time: string;
+  end_time: string;
+  priority: "High" | "Medium" | "Low";
+  color?: string;
+  retention_rate?: number;
+  reason?: string;
+}
+
+export interface GeneratedStudyPlanResponse {
+  message: string;
+  plans: StudyPlanItem[];
+  retention: StudyRetentionItem[];
+  lowRetentionNotes: StudyRetentionItem[];
 }
 
 export interface StudyPlanStats {
@@ -167,6 +197,8 @@ export interface RoutineItem {
   color: string;
   status: "active" | "cancelled" | "paused";
   type: "class" | "study";
+  source?: "manual" | "study-plan";
+  noteId?: string;
 }
 
 export interface NoteItem {
@@ -183,6 +215,8 @@ export interface NoteItem {
   notes: string;
   reviewed: boolean;
   createdAt: string;
+  lastReviewedAt?: string | null;
+  reviewCount?: number;
 }
 
 export interface Settings {

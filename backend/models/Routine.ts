@@ -12,6 +12,8 @@ export interface IRoutine extends Document {
   color: string;
   status: "active" | "cancelled" | "paused";
   type: "class" | "study";
+  source?: "manual" | "study-plan";
+  noteId?: mongoose.Types.ObjectId;
   createdAt: Date;
 }
 
@@ -40,6 +42,12 @@ const routineSchema = new Schema<IRoutine>(
       enum: ["class", "study"],
       default: "class",
     },
+    source: {
+      type: String,
+      enum: ["manual", "study-plan"],
+      default: "manual",
+    },
+    noteId: { type: Schema.Types.ObjectId, ref: "Note" },
   },
   { timestamps: true }
 );

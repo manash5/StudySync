@@ -25,8 +25,8 @@ export default function Notes() {
     const run = async () => {
       try {
         const [subjectsRes, notesRes] = await Promise.all([
-          backendApi.get<Subject[]>('/api/subjects'),
-          backendApi.get<NoteItem[]>('/api/notes'),
+          backendApi.get<Subject[]>('/subjects'),
+          backendApi.get<NoteItem[]>('/notes'),
         ])
         setSubjects(subjectsRes)
         setNotes(notesRes)
